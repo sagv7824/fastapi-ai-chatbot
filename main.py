@@ -11,6 +11,7 @@ import google.generativeai as genai
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.schema import HumanMessage
 from dotenv import load_dotenv
+import base64
 load_dotenv()
 
 app = FastAPI()
@@ -125,10 +126,12 @@ class TranslationService:
         
         # Load from env var
         google_creds_b64 = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
-        if not google_creds_b64:
+        google_creds_json = base64.b64decode(google_creds_b64).decode("utf-8")
+        
+        if not google_creds_json:
             raise ValueError("GOOGLE_APPLICATION_CREDENTIALS_JSON not set")
 
-        creds_dict = json.loads(google_creds_b64)
+        creds_dict = json.loads(google_creds_json)
         self.client = translate_v3.TranslationServiceClient.from_service_account_info(creds_dict)
         self.parent = f"projects/{self.project_id}/locations/global"
     
