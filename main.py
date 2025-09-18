@@ -123,10 +123,13 @@ class TranslationService:
         if not self.project_id:
             raise ValueError("GOOGLE_CLOUD_PROJECT not set")
         
-        if not os.path.exists("google.json"):
-            raise ValueError("Service account file 'google.json' not found")
-        
-        self.client = translate_v3.TranslationServiceClient.from_service_account_json("google.json")
+        # Load from env var
+        google_creds_b64 = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+        if not google_creds_b64:
+            raise ValueError("GOOGLE_APPLICATION_CREDENTIALS_JSON not set")
+
+        creds_dict = json.loads(google_creds_b64)
+        self.client = translate_v3.TranslationServiceClient.from_service_account_info(creds_dict)
         self.parent = f"projects/{self.project_id}/locations/global"
     
     def translate_text(self, text: str, target_language: str, source_language: str = None) -> str:
