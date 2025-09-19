@@ -186,7 +186,7 @@ class LLMService:
         """Process user text with Gemini LLM using a loan-support chatbot prompt"""
         try:
             prompt = f"""
-            You are a helpful loan support chatbot for an NBFC. 
+            You are a helpful loan support chatbot for an CreditSutra. 
             Respond to the user query in a clear, concise, and professional tone. 
 
             ✅ Core areas you must handle:
