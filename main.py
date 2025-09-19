@@ -32,8 +32,16 @@ AUDIO_UPLOADS_DIRECTORY = "audio_uploads"
 os.makedirs(TRANSCRIPTS_DIRECTORY, exist_ok=True)
 os.makedirs(AUDIO_UPLOADS_DIRECTORY, exist_ok=True)
 
-# Response Model
+# Response Models
 class AudioResponse(BaseModel):
+    resp: str
+    language: str
+
+class TextQueryRequest(BaseModel):
+    text_query: str
+    source_language: str
+
+class TextResponse(BaseModel):
     resp: str
     language: str
 
@@ -175,22 +183,40 @@ class LLMService:
         )
     
     async def process_with_llm(self, text: str) -> str:
-        """Process text with Gemini LLM using a default helpful prompt"""
+        """Process user text with Gemini LLM using a loan-support chatbot prompt"""
         try:
             prompt = f"""
-            Please analyze the following text and provide a helpful, informative response. 
-            Summarize the key points and provide any relevant insights or recommendations based on the content.
-            Keep your response clear, concise, and actionable.
-            
-            Text: {text}
-            
+            You are a helpful loan support chatbot for an NBFC. 
+            Respond to the user query in a clear, concise, and professional tone. 
+
+            ✅ Core areas you must handle:
+            - Loan Application Support (types, process, max loan amount, interest rates, approval time, etc.)
+            - Loan Eligibility Queries (income, credit score, self-employed, etc.)
+            - Document Upload Assistance (required docs, upload help, troubleshooting)
+            - Loan Status Tracking (application ID, approval, disbursal updates)
+            - FAQs (mobile number update, reference number retrieval, loan timeframes)
+            - Multilingual Support (English, Hindi, Telugu)
+            - Grievance Redressal (complaints, escalation, human handoff)
+
+            🚫 If the query is random/unrelated (e.g., sports, jokes):
+            - Use polite fallback responses:
+            1. Polite Redirect
+            2. Friendly Clarification
+            3. Professional Demo-Safe Message
+            4. Human Handoff (if repeated)
+
+            🎯 Always keep replies short, polite, and actionable. 
+            For unsupported queries, redirect user back to loan services.
+
+            User Query: {text}
+
             Response:
             """
             
             # Get response from LLM
             response = self.llm.invoke([HumanMessage(content=prompt)])
-            return response.content
-            
+            return response.content.strip()
+        
         except Exception as e:
             raise Exception(f"LLM processing error: {str(e)}")
 
@@ -281,6 +307,48 @@ class AudioPipelineOrchestrator:
                 except:
                     pass
 
+    async def process_text_query(self, text_query: str, source_language: str) -> TextResponse:
+        """Text pipeline: Text -> Translate -> LLM -> Translate back"""
+        try:
+            print(f"Processing text query: {text_query[:100]}...")
+            
+            # Step 1: Get language code for translation
+            source_lang_code = self.extract_language_code(source_language)
+            
+            # Step 2: Translate to English (if not already English)
+            if source_lang_code.lower() != 'en':
+                print("Translating text to English")
+                english_text = self.translation_service.translate_text(
+                    text_query,
+                    target_language="en",
+                    source_language=source_lang_code
+                )
+            else:
+                english_text = text_query
+            
+            # Step 3: Process with Gemini LLM
+            print("Processing with Gemini LLM")
+            llm_response = await self.llm_service.process_with_llm(english_text)
+            
+            # Step 4: Translate back to original language (if not English)
+            if source_lang_code.lower() != 'en':
+                print("Translating response back to original language")
+                final_response = self.translation_service.translate_text(
+                    llm_response,
+                    target_language=source_lang_code,
+                    source_language="en"
+                )
+            else:
+                final_response = llm_response
+            
+            return TextResponse(
+                resp=final_response,
+                language=source_lang_code
+            )
+            
+        except Exception as e:
+            raise Exception(f"Text pipeline error: {str(e)}")
+
 # Initialize the orchestrator
 pipeline = AudioPipelineOrchestrator()
 
@@ -330,6 +398,39 @@ async def process_audio(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/process-text/", response_model=TextResponse)
+async def process_text(request: TextQueryRequest):
+    """
+    Process text query: Text -> Translate -> LLM -> Translate back
+    
+    Parameters:
+    - text_query: The text query to process
+    - source_language: Language code (e.g., "hi-IN", "en-US", "es-ES")
+    
+    Returns: {"resp": "response text", "language": "language_code"}
+    """
+    
+    # Validate input
+    if not request.text_query.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Text query cannot be empty"
+        )
+    
+    # Validate text length (e.g., max 10000 characters)
+    max_length = 10000
+    if len(request.text_query) > max_length:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Text query too long. Maximum length: {max_length} characters"
+        )
+    
+    try:
+        result = await pipeline.process_text_query(request.text_query, request.source_language)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/health/")
 async def health_check():
     """Health check endpoint"""
@@ -337,7 +438,7 @@ async def health_check():
         "status": "healthy",
         "services": {
             "aws_transcribe": "✓" if os.getenv('AWS_DEFAULT_REGION') else "✗",
-            "s3_bucket": "✓" if os.getenv('S3_BUCKET_NAME') else "✗",
+            "s3_bucket": "✓" if os.getenv('AWS_BUCKET') else "✗",
             "google_translate": "✓" if os.getenv('GOOGLE_CLOUD_PROJECT') else "✗",
             "gemini_llm": "✓" if os.getenv('GOOGLE_API_KEY') else "✗"
         }
@@ -347,15 +448,28 @@ async def health_check():
 async def root():
     """API information"""
     return {
-        "message": "Multilingual Audio Processing API - File Upload",
-        "endpoint": "/process-audio/",
-        "method": "POST",
-        "parameters": {
-            "file": "Audio file (mp3, wav, m4a, etc.)",
-            "source_language": "Language code (e.g., 'hi-IN', 'en-US')"
+        "message": "Multilingual Audio & Text Processing API",
+        "endpoints": {
+            "audio_processing": {
+                "endpoint": "/process-audio/",
+                "method": "POST",
+                "parameters": {
+                    "file": "Audio file (mp3, wav, m4a, etc.)",
+                    "source_language": "Language code (e.g., 'hi-IN', 'en-US')"
+                },
+                "supported_formats": [".mp3", ".wav", ".m4a", ".flac", ".ogg", ".wma"],
+                "max_file_size": "100MB"
+            },
+            "text_processing": {
+                "endpoint": "/process-text/",
+                "method": "POST",
+                "parameters": {
+                    "text_query": "Text to process",
+                    "source_language": "Language code (e.g., 'hi-IN', 'en-US')"
+                },
+                "max_text_length": "10000 characters"
+            }
         },
-        "supported_formats": [".mp3", ".wav", ".m4a", ".flac", ".ogg", ".wma"],
-        "max_file_size": "100MB",
         "response_format": {
             "resp": "AI generated response text",
             "language": "source language code"
