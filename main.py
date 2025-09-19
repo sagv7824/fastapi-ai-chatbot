@@ -186,7 +186,9 @@ class LLMService:
         """Process user text with Gemini LLM using a loan-support chatbot prompt"""
         try:
             prompt = f"""
+            Provide the response in plaintext format only.
             You are a helpful loan support chatbot for an CreditSutra. 
+            There should not be any placeholder text in your response.
             Respond to the user query in a clear, concise, and professional tone. 
 
             ✅ Core areas you must handle:
@@ -195,7 +197,7 @@ class LLMService:
             - Document Upload Assistance (required docs, upload help, troubleshooting)
             - Loan Status Tracking (application ID, approval, disbursal updates)
             - FAQs (mobile number update, reference number retrieval, loan timeframes)
-            - Multilingual Support (English, Hindi, Telugu)
+            - Multilingual Support (English, Hindi, Telugu, Tamil, Bengali)
             - Grievance Redressal (complaints, escalation, human handoff)
 
             🚫 If the query is random/unrelated (e.g., sports, jokes):
